@@ -214,3 +214,173 @@ def compute_lag(estimates: np.ndarray, ground_truth: np.ndarray) -> float:
     Positive lag -> filter trails ground truth.
     """
     valid = ~np.isnan(estimates[:, 0])
+    est_x = estimates[valid, 0] - estimates[valid, 0].mean()
+    gt_x = ground_truth[valid, 0] - ground_truth[valid, 0].mean()
+    corr = np.correlate(est_x, gt_x, mode="full")
+    lag = corr.argmax() - (len(gt_x) - 1)
+    return float(lag)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Plotting
+# ──────────────────────────────────────────────────────────────────────────────
+
+def plot_trajectory_comparison(
+    ground_truth: np.ndarray,
+    measurements: np.ndarray,
+    kf_estimates: np.ndarray,
+    oef_estimates: np.ndarray,
+    observed_mask: np.ndarray,
+    title: str = "Trajectory Comparison",
+    filename: str = "trajectory_comparison.png",
+) -> Path:
+    """2-D trajectory overlay plot."""
+    _RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(11, 7))
+    fig.patch.set_facecolor("#1a1a2e")
+    ax.set_facecolor("#16213e")
+
+    valid_obs = observed_mask
+
+    # Ground truth
+    ax.plot(ground_truth[:, 0], ground_truth[:, 1],
+            color="#e2e2e2", linewidth=2.5, label="Ground Truth", zorder=3)
+
+    # Raw noisy measurements
+    ax.scatter(
+        measurements[valid_obs, 0], measurements[valid_obs, 1],
+        color="#f7971e", s=12, alpha=0.6, label="Noisy Measurements", zorder=2,
+    )
+
+    # Missed frames
+    missed = ~observed_mask
+    if missed.any():
+        # Mark first/last GT positions to show where drops occurred
+        ax.scatter(
+            ground_truth[missed, 0], ground_truth[missed, 1],
+            marker="x", color="#ff4757", s=30, alpha=0.7, label="Dropped Frames", zorder=2,
+        )
+
+    # KF estimate
+    valid_kf = ~np.isnan(kf_estimates[:, 0])
+    ax.plot(kf_estimates[valid_kf, 0], kf_estimates[valid_kf, 1],
+            color="#2ed573", linewidth=2, label="Kalman Filter", zorder=4)
+
+    # OEF estimate
+    valid_oef = ~np.isnan(oef_estimates[:, 0])
+    ax.plot(oef_estimates[valid_oef, 0], oef_estimates[valid_oef, 1],
+            color="#ff6b81", linewidth=2, linestyle="--", label="One Euro Filter", zorder=4)
+
+    ax.set_title(title, color="white", fontsize=14, fontweight="bold", pad=12)
+    ax.set_xlabel("X (pixels)", color="#aaaaaa")
+    ax.set_ylabel("Y (pixels)", color="#aaaaaa")
+    ax.tick_params(colors="#aaaaaa")
+    for spine in ax.spines.values():
+        spine.set_edgecolor("#444466")
+    ax.legend(facecolor="#1a1a2e", edgecolor="#444466", labelcolor="white", fontsize=10)
+
+    out_path = _RESULTS_DIR / filename
+    plt.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[evaluate] Saved -> {out_path}")
+    return out_path
+
+
+def plot_error_over_time(
+    ground_truth: np.ndarray,
+    kf_estimates: np.ndarray,
+    oef_estimates: np.ndarray,
+    title: str = "Position Error Over Time",
+    filename: str = "error_over_time.png",
+) -> Path:
+    """Per-frame L2 position error for KF and OEF."""
+    _RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    valid = ~np.isnan(kf_estimates[:, 0])
+    frames = np.where(valid)[0]
+
+    kf_err  = np.linalg.norm(kf_estimates[valid]  - ground_truth[valid], axis=1)
+    oef_err = np.linalg.norm(oef_estimates[valid] - ground_truth[valid], axis=1)
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+    fig.patch.set_facecolor("#1a1a2e")
+    ax.set_facecolor("#16213e")
+
+    ax.plot(frames, kf_err,  color="#2ed573", linewidth=1.5, label="Kalman Filter Error")
+    ax.plot(frames, oef_err, color="#ff6b81", linewidth=1.5, linestyle="--", label="One Euro Filter Error")
+    ax.fill_between(frames, kf_err, alpha=0.15, color="#2ed573")
+    ax.fill_between(frames, oef_err, alpha=0.15, color="#ff6b81")
+
+    ax.set_title(title, color="white", fontsize=14, fontweight="bold", pad=12)
+    ax.set_xlabel("Frame", color="#aaaaaa")
+    ax.set_ylabel("L2 Error (pixels)", color="#aaaaaa")
+    ax.tick_params(colors="#aaaaaa")
+    for spine in ax.spines.values():
+        spine.set_edgecolor("#444466")
+    ax.legend(facecolor="#1a1a2e", edgecolor="#444466", labelcolor="white", fontsize=10)
+
+    out_path = _RESULTS_DIR / filename
+    plt.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[evaluate] Saved -> {out_path}")
+    return out_path
+
+
+def plot_benchmark_table(rows: list[dict], filename: str = "benchmark_table.png") -> Path:
+    """
+    Render a styled metrics table as an image.
+
+    Parameters
+    ----------
+    rows : list of dicts with keys:
+        'scenario', 'filter', 'rmse', 'jitter', 'lag'
+    """
+    _RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    col_labels = ["Scenario", "Filter", "RMSE (px)", "Jitter (px²)", "Lag (frames)"]
+    cell_data = [
+        [r["scenario"], r["filter"], f"{r['rmse']:.2f}", f"{r['jitter']:.3f}", f"{r['lag']:.1f}"]
+        for r in rows
+    ]
+
+    fig, ax = plt.subplots(figsize=(10, 0.45 * (len(rows) + 2) + 1.5))
+    fig.patch.set_facecolor("#1a1a2e")
+    ax.set_facecolor("#1a1a2e")
+    ax.axis("off")
+
+    table = ax.table(
+        cellText=cell_data,
+        colLabels=col_labels,
+        loc="center",
+        cellLoc="center",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(11)
+    table.scale(1, 1.6)
+
+    # Style header
+    for j in range(len(col_labels)):
+        table[0, j].set_facecolor("#0f3460")
+        table[0, j].set_text_props(color="white", fontweight="bold")
+
+    # Alternate row colours
+    for i in range(1, len(rows) + 1):
+        bg = "#16213e" if i % 2 == 0 else "#1a1a2e"
+        for j in range(len(col_labels)):
+            table[i, j].set_facecolor(bg)
+            table[i, j].set_text_props(color="white")
+            # Highlight winning filter (lower RMSE) in green
+            if col_labels[j] == "RMSE (px)":
+                pass  # colour applied after all rows known
+
+    ax.set_title("Benchmark Results", color="white", fontsize=14, fontweight="bold", pad=10)
+
+    out_path = _RESULTS_DIR / filename
+    plt.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[evaluate] Saved -> {out_path}")
+    return out_path
+
