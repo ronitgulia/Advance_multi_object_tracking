@@ -384,3 +384,90 @@ def plot_benchmark_table(rows: list[dict], filename: str = "benchmark_table.png"
     print(f"[evaluate] Saved -> {out_path}")
     return out_path
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Full benchmark runner
+# ──────────────────────────────────────────────────────────────────────────────
+
+def run_full_benchmark(n_frames: int = 300, verbose: bool = True) -> dict:
+    """
+    Run KF vs OEF benchmark across three scenarios:
+      1. Low noise (easy)
+      2. High noise (challenging)
+      3. High noise + 30% frame drops (robustness)
+
+    Returns
+    -------
+    dict mapping scenario name -> metric dict
+    """
+    scenarios = [
+        {"name": "Low Noise",           "noise": 4.0,  "drop": 0.00},
+        {"name": "High Noise",           "noise": 15.0, "drop": 0.00},
+        {"name": "High Noise + Drops",   "noise": 15.0, "drop": 0.30},
+    ]
+
+    all_results = {}
+    table_rows: list[dict] = []
+    rng = np.random.default_rng(seed=7)
+
+    for sc in scenarios:
+        data = generate_synthetic_trajectory(
+            n_frames=n_frames,
+            measurement_noise_std=sc["noise"],
+            drop_fraction=sc["drop"],
+            rng=rng,
+        )
+        gt   = data["ground_truth"]
+        meas = data["measurements"]
+        mask = data["observed_mask"]
+
+        kf_est  = run_kalman_filter(meas, mask,
+                                    process_noise_std=2.0,
+                                    measurement_noise_std=sc["noise"])
+        oef_est = run_one_euro_filter(meas, mask)
+
+        metrics = {
+            "kf":  {"rmse": compute_rmse(kf_est,  gt),
+                    "jitter": compute_jitter(kf_est),
+                    "lag":    compute_lag(kf_est, gt)},
+            "oef": {"rmse": compute_rmse(oef_est, gt),
+                    "jitter": compute_jitter(oef_est),
+                    "lag":    compute_lag(oef_est, gt)},
+        }
+        all_results[sc["name"]] = metrics
+
+        # Safe filename
+        safe_name = sc["name"].lower().replace(" ", "_").replace("+", "plus")
+
+        # Trajectory plot
+        plot_trajectory_comparison(
+            gt, meas, kf_est, oef_est, mask,
+            title=f"Trajectory Comparison — {sc['name']}",
+            filename=f"trajectory_{safe_name}.png",
+        )
+
+        # Error-over-time plot
+        plot_error_over_time(
+            gt, kf_est, oef_est,
+            title=f"Error Over Time — {sc['name']}",
+            filename=f"error_{safe_name}.png",
+        )
+
+        for fname, fmetrics in [("Kalman Filter", metrics["kf"]),
+                                  ("One Euro Filter", metrics["oef"])]:
+            table_rows.append({
+                "scenario": sc["name"],
+                "filter": fname,
+                "rmse":   fmetrics["rmse"],
+                "jitter": fmetrics["jitter"],
+                "lag":    fmetrics["lag"],
+            })
+
+        if verbose:
+            print(f"\n[{sc['name']}]")
+            print(f"  KF  -> RMSE={metrics['kf']['rmse']:.2f}  Jitter={metrics['kf']['jitter']:.3f}  Lag={metrics['kf']['lag']:.1f}")
+            print(f"  OEF -> RMSE={metrics['oef']['rmse']:.2f}  Jitter={metrics['oef']['jitter']:.3f}  Lag={metrics['oef']['lag']:.1f}")
+
+    plot_benchmark_table(table_rows)
+
+    return all_results
