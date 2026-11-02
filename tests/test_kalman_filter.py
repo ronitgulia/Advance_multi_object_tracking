@@ -282,3 +282,180 @@ class TestCovariancePSD:
             assert np.allclose(P, P.T, atol=1e-12), "Covariance P is not symmetric."
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 4. Tracker Tests
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _make_bbox(cx: float, cy: float, w: float = 50.0, h: float = 80.0) -> np.ndarray:
+    """Helper: create a detection array [x1, y1, x2, y2, conf, cls]."""
+    return np.array([cx - w/2, cy - h/2, cx + w/2, cy + h/2, 0.9, 0.0], dtype=np.float32)
+
+
+class TestTracker:
+    """Tests for multi-object tracker ID assignment and lifecycle."""
+
+    def test_single_object_birth(self) -> None:
+        """A new detection should create exactly one track."""
+        tracker = MultiObjectTracker()
+        det = np.array([_make_bbox(100, 100)])
+        outputs = tracker.update(det)
+        assert len(outputs) == 1, "Expected 1 track from 1 detection."
+        assert outputs[0]["track_id"] == 1
+
+    def test_track_id_persistence(self) -> None:
+        """The same object should keep the same track ID across frames."""
+        tracker = MultiObjectTracker()
+        # Frame 1: birth
+        outputs1 = tracker.update(np.array([_make_bbox(100, 100)]))
+        tid1 = outputs1[0]["track_id"]
+
+        # Frames 2–10: slight movement
+        for k in range(1, 10):
+            dets = np.array([_make_bbox(100 + k * 2, 100 + k)])
+            outputs = tracker.update(dets)
+            assert len(outputs) == 1, f"Frame {k+1}: expected 1 track, got {len(outputs)}"
+            assert outputs[0]["track_id"] == tid1, (
+                f"Frame {k+1}: track ID changed from {tid1} to {outputs[0]['track_id']}"
+            )
+
+    def test_track_death_on_missed_frames(self) -> None:
+        """A track should be deleted after max_missed consecutive missed frames."""
+        max_missed = 3
+        tracker = MultiObjectTracker(max_missed=max_missed)
+
+        # Create track
+        tracker.update(np.array([_make_bbox(200, 200)]))
+
+        # Send empty detections for max_missed frames
+        for _ in range(max_missed):
+            outputs = tracker.update(np.zeros((0, 6), dtype=np.float32))
+
+        # One more frame — track should now be deleted
+        outputs = tracker.update(np.zeros((0, 6), dtype=np.float32))
+        assert len(outputs) == 0, (
+            f"Track should be dead after {max_missed} missed frames, but got {len(outputs)} tracks."
+        )
+
+    def test_two_objects_get_distinct_ids(self) -> None:
+        """Two spatially separate detections should get distinct IDs."""
+        tracker = MultiObjectTracker()
+        dets = np.array([_make_bbox(100, 100), _make_bbox(400, 400)])
+        outputs = tracker.update(dets)
+        assert len(outputs) == 2, "Expected 2 tracks."
+        ids = {o["track_id"] for o in outputs}
+        assert len(ids) == 2, f"Expected 2 distinct IDs, got {ids}"
+
+    def test_no_id_reuse_after_death(self) -> None:
+        """After a track dies, the next new track should get a fresh ID."""
+        tracker = MultiObjectTracker(max_missed=1)
+
+        # Birth: ID 1
+        tracker.update(np.array([_make_bbox(100, 100)]))
+        # Kill it: 2 missed frames
+        tracker.update(np.zeros((0, 6), dtype=np.float32))
+        tracker.update(np.zeros((0, 6), dtype=np.float32))
+
+        # New detection: should get ID 2, not 1
+        outputs = tracker.update(np.array([_make_bbox(500, 500)]))
+        assert len(outputs) == 1
+        new_id = outputs[0]["track_id"]
+        assert new_id > 1, f"ID reuse detected: got ID {new_id} after track 1 died."
+
+    def test_empty_frame_no_crash(self) -> None:
+        """Updating with zero detections on an empty tracker should not crash."""
+        tracker = MultiObjectTracker()
+        outputs = tracker.update(np.zeros((0, 6), dtype=np.float32))
+        assert outputs == [], f"Expected empty output, got {outputs}"
+
+    def test_multiple_births_and_deaths(self) -> None:
+        """Stress test with many tracks appearing and disappearing."""
+        tracker = MultiObjectTracker(max_missed=2)
+
+        # Birth 5 tracks
+        dets = np.array([_make_bbox(i * 100, i * 100) for i in range(1, 6)])
+        outputs = tracker.update(dets)
+        assert len(outputs) == 5
+
+        # All alive: 5 detections near original positions
+        for _ in range(5):
+            dets = np.array([_make_bbox(i * 100 + 2, i * 100 + 1) for i in range(1, 6)])
+            outputs = tracker.update(dets)
+            assert len(outputs) == 5
+
+        # All disappear — after max_missed+1 frames they should be gone
+        for _ in range(4):
+            tracker.update(np.zeros((0, 6), dtype=np.float32))
+
+        outputs = tracker.update(np.zeros((0, 6), dtype=np.float32))
+        alive_non_missed = [o for o in outputs if o["missed"] == 0]
+        assert len(alive_non_missed) == 0, "All tracks should have died."
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 5. One Euro Filter Tests
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestOneEuroFilter:
+    """Sanity checks for the One Euro Filter."""
+
+    def test_static_signal_converges_to_value(self) -> None:
+        """On a constant signal, the OEF should converge to that value."""
+        oef = OneEuroFilter2D(min_cutoff=1.0, beta=0.0)
+        value = np.array([42.0, 137.0])
+        for _ in range(100):
+            out = oef.filter(value)
+        assert np.allclose(out, value, atol=0.01), (
+            f"OEF didn't converge to static value: got {out}"
+        )
+
+    def test_output_is_smoother_than_input(self) -> None:
+        """OEF output variance should be lower than noisy input variance."""
+        rng = np.random.default_rng(seed=22)
+        n = 200
+        true_val = np.array([100.0, 50.0])
+        noisy = true_val + rng.normal(0, 10.0, (n, 2))
+
+        oef = OneEuroFilter2D(min_cutoff=0.5, beta=0.001)
+        filtered = np.array([oef.filter(noisy[k]) for k in range(n)])
+
+        in_var  = np.var(noisy, axis=0).mean()
+        out_var = np.var(filtered, axis=0).mean()
+        assert out_var < in_var, (
+            f"OEF output variance {out_var:.2f} not less than input {in_var:.2f}"
+        )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 6. Evaluate Module Tests
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestEvaluate:
+    """Tests for the synthetic data generation and metric computation."""
+
+    def test_synthetic_trajectory_shape(self) -> None:
+        from evaluate import generate_synthetic_trajectory
+        data = generate_synthetic_trajectory(n_frames=100)
+        assert data["ground_truth"].shape == (100, 2)
+        assert data["measurements"].shape == (100, 2)
+        assert data["observed_mask"].shape == (100,)
+
+    def test_drop_fraction_correct(self) -> None:
+        from evaluate import generate_synthetic_trajectory
+        data = generate_synthetic_trajectory(n_frames=200, drop_fraction=0.2,
+                                              rng=np.random.default_rng(1))
+        n_dropped = (~data["observed_mask"]).sum()
+        # Allow ±5% tolerance
+        assert 30 <= n_dropped <= 50, f"Expected ~40 drops, got {n_dropped}"
+
+    def test_rmse_perfect_estimate(self) -> None:
+        from evaluate import compute_rmse
+        gt   = np.ones((100, 2)) * 5.0
+        est  = np.ones((100, 2)) * 5.0
+        assert compute_rmse(est, gt) == pytest.approx(0.0, abs=1e-10)
+
+    def test_jitter_zero_for_straight_line(self) -> None:
+        from evaluate import compute_jitter
+        # Perfectly linear trajectory → zero velocity variance → zero jitter
+        t = np.arange(100).reshape(-1, 1)
+        pos = np.hstack([t * 2.0, t * 1.5])
+        assert compute_jitter(pos) == pytest.approx(0.0, abs=1e-10)
