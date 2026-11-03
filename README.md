@@ -77,3 +77,86 @@ source .venv/bin/activate
 # Install dependencies
 pip install numpy scipy matplotlib ultralytics pytest
 ```
+
+---
+
+## ⚡ Quickstart & Usage
+
+### 1. Real-time Object Tracking Pipeline
+```python
+import cv2
+from detector import YOLOv8Detector
+from tracker import MultiObjectTracker
+
+# Initialize detector (YOLOv8n default) and tracker
+detector = YOLOv8Detector(model_name="yolov8n.pt", conf_threshold=0.4)
+tracker = MultiObjectTracker(max_missed=5, iou_threshold=0.3)
+
+cap = cv2.VideoCapture("input_video.mp4")
+
+while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    # 1. Detect objects [x1, y1, x2, y2, confidence, class_id]
+    detections = detector.detect(frame)
+
+    # 2. Update multi-object tracker
+    active_tracks = tracker.update(detections)
+
+    # 3. Retrieve filtered positions and track states
+    for track in active_tracks:
+        track_id = track["track_id"]
+        bbox = track["bbox"]        # [x1, y1, x2, y2]
+        kf_pos = track["kf_pos"]    # [cx, cy] Kalman filtered position
+        oef_pos = track["oef_pos"]  # [cx, cy] One Euro filtered position
+
+cap.release()
+```
+
+### 2. Running Benchmarks & Generating Plots
+Evaluate filter tracking performance across synthetic constant velocity, high-maneuver turns, and sensor dropout scenarios:
+
+```bash
+python src/evaluate.py
+```
+Outputs trajectory comparisons and error-over-time plots in `results/`.
+
+### 3. Running Unit Tests
+Verify mathematical convergence, gain limits, and covariance PSD guarantees:
+
+```bash
+pytest tests/ -v
+```
+
+---
+
+## 📊 Benchmark Metrics Summary
+
+| Metric | Target | Description |
+| :--- | :--- | :--- |
+| **RMSE** | Lower is better | Root Mean Squared Error between filtered state estimate and ground truth |
+| **Jitter** | Lower is better | Mean variance of first-order frame-to-frame position displacement |
+| **Lag** | Lower is better | Cross-correlation offset peak identifying phase delay behind dynamic motion |
+| **Robustness** | Higher is better | State prediction error under simulated sensor occlusions & detection dropouts |
+
+---
+
+## 📌 Roadmap & Progress
+
+- [x] 2D Constant-Velocity Kalman Filter with discrete white noise acceleration (DWNA)
+- [x] Joseph-form covariance update to ensure numerical positive semi-definiteness
+- [x] Adaptive 1D and 2D One Euro filters for speed-dependent jitter mitigation
+- [x] Multi-object tracker state machine with Hungarian association (IoU cost metric)
+- [x] YOLOv8 deep learning detector wrapper interface
+- [x] Multi-scenario synthetic benchmarking suite with automated plot generation
+- [x] Comprehensive test suite covering filter convergence and matrix guarantees
+- [ ] Multi-camera coordinate fusion & re-identification (ReID) embedding support
+- [ ] 3D bounding box orientation estimation with Extended Kalman Filter (EKF)
+
+---
+
+## 📄 License
+
+Distributed under the MIT License. See `LICENSE` for more information.
