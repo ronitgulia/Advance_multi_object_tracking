@@ -119,3 +119,101 @@ def _draw_tracks(frame: np.ndarray, track_outputs: list[dict]) -> np.ndarray:
 
     return out
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Main tracking loop
+# ──────────────────────────────────────────────────────────────────────────────
+
+def run_tracking(
+    video_source: str | int,
+    output_path: Path,
+    conf_threshold: float = 0.4,
+    device: str = "cpu",
+    max_missed: int = 5,
+    class_filter: list[int] | None = None,
+) -> None:
+    """
+    Open a video source, run YOLOv8 detection + KF/OEF tracking,
+    and write annotated output video.
+    """
+    print(f"\n{'='*60}")
+    print(f"  Kalman Filter Multi-Object Tracker")
+    print(f"{'='*60}")
+    print(f"  Source  : {video_source}")
+    print(f"  Output  : {output_path}")
+    print(f"  Device  : {device}")
+    print(f"  Conf    : {conf_threshold}")
+    print(f"{'='*60}\n")
+
+    # ── Detector ──────────────────────────────────────────────────────
+    detector = YOLOv8Detector(
+        model_name="yolov8n.pt",
+        conf_threshold=conf_threshold,
+        device=device,
+        class_filter=class_filter,
+    )
+
+    # ── Tracker ───────────────────────────────────────────────────────
+    tracker = MultiObjectTracker(max_missed=max_missed)
+
+    # ── Video I/O ─────────────────────────────────────────────────────
+    cap = cv2.VideoCapture(video_source)
+    if not cap.isOpened():
+        if isinstance(video_source, str):
+            print(f"[ERROR] Cannot open video: {video_source}")
+            print("[INFO]  Falling back to webcam (device 0).")
+            cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            print("[ERROR] Could not open any video source. Exiting.")
+            sys.exit(1)
+
+    fps   = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    W     = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    H     = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(output_path), fourcc, fps, (W, H))
+
+    frame_idx = 0
+    t0 = time.perf_counter()
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        # Detect
+        detections = detector.detect(frame)
+
+        # Track
+        track_outputs = tracker.update(detections)
+
+        # Annotate
+        vis = _draw_tracks(frame, track_outputs)
+
+        # Frame counter overlay
+        progress = f"Frame {frame_idx+1}"
+        if total > 0:
+            progress += f"/{total}  ({(frame_idx+1)/total*100:.1f}%)"
+        cv2.putText(vis, progress, (W - 280, H - 15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
+
+        writer.write(vis)
+        frame_idx += 1
+
+        if frame_idx % 30 == 0:
+            elapsed = time.perf_counter() - t0
+            fps_actual = frame_idx / elapsed
+            n_tracks = len([t for t in track_outputs if t["missed"] == 0])
+            print(f"  Frame {frame_idx:4d}  |  Active tracks: {n_tracks:2d}  |  {fps_actual:.1f} fps")
+
+    cap.release()
+    writer.release()
+
+    elapsed = time.perf_counter() - t0
+    print(f"\n[INFO] Tracking complete — {frame_idx} frames in {elapsed:.1f}s")
+    print(f"[INFO] Output video → {output_path}\n")
+
+
