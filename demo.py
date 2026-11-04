@@ -217,3 +217,61 @@ def run_tracking(
     print(f"[INFO] Output video → {output_path}\n")
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# CLI
+# ──────────────────────────────────────────────────────────────────────────────
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Kalman Filter Multi-Object Tracker with KF vs OEF Benchmark",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--video", default=None,
+                        help="Path to input video file. Defaults to webcam (device 0).")
+    parser.add_argument("--output", default="results/tracked.mp4",
+                        help="Output annotated video path.")
+    parser.add_argument("--conf", type=float, default=0.4,
+                        help="YOLO detection confidence threshold (default: 0.4).")
+    parser.add_argument("--device", default="cpu",
+                        help="Inference device: cpu | cuda | mps (default: cpu).")
+    parser.add_argument("--max-missed", type=int, default=5,
+                        help="Frames before a track is deleted (default: 5).")
+    parser.add_argument("--classes", type=int, nargs="+", default=None,
+                        help="COCO class IDs to track (default: all classes).")
+    parser.add_argument("--benchmark-only", action="store_true",
+                        help="Skip tracking; run KF vs OEF benchmark only.")
+    parser.add_argument("--no-benchmark", action="store_true",
+                        help="Skip benchmark after tracking.")
+    parser.add_argument("--benchmark-frames", type=int, default=300,
+                        help="Number of synthetic frames for benchmark (default: 300).")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+
+    # ── Benchmark ─────────────────────────────────────────────────────
+    if not args.no_benchmark:
+        print("\n[INFO] Running KF vs One Euro Filter benchmark on synthetic data…")
+        from evaluate import run_full_benchmark
+        results = run_full_benchmark(n_frames=args.benchmark_frames, verbose=True)
+        print("\n[INFO] All benchmark plots saved to results/")
+
+    # ── Tracking ──────────────────────────────────────────────────────
+    if not args.benchmark_only:
+        video_source: str | int = args.video if args.video else 0
+        run_tracking(
+            video_source=video_source,
+            output_path=Path(args.output),
+            conf_threshold=args.conf,
+            device=args.device,
+            max_missed=args.max_missed,
+            class_filter=args.classes,
+        )
+
+    print("\n[DONE] All tasks complete.")
+    print("       Results and plots -> results/")
+
+
+if __name__ == "__main__":
+    main()
