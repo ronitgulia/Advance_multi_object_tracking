@@ -29,8 +29,12 @@ A high-performance, modular computer vision pipeline for Multi-Object Tracking (
 
 ```text
 Advance_multi_object_tracking/
+├── data/
+│   └── README.md               # Dataset download instructions (MOT17, VIRAT)
 ├── docs/
 │   └── math_derivation.md      # Rigorous step-by-step Bayesian derivation of KF equations
+├── notebooks/
+│   └── demo.ipynb              # Interactive walkthrough: trajectory simulation, ellipses, drops
 ├── src/
 │   ├── detector.py             # YOLOv8 deep learning detection wrapper
 │   ├── kalman_filter.py        # 2D Constant-Velocity Kalman Filter (Joseph form)
@@ -39,7 +43,9 @@ Advance_multi_object_tracking/
 │   └── evaluate.py             # Benchmark engine, metric calculator, and plot generator
 ├── tests/
 │   └── test_kalman_filter.py   # Comprehensive test suite (convergence, PSD, lifecycle)
-├── .gitignore                  # Standard Python and environment ignores
+├── demo.py                     # CLI entry point for live video & webcam tracking
+├── requirements.txt            # Project dependencies and environment specs
+├── .gitignore                  # Standard Python, media, and weight ignores
 └── README.md                   # Project documentation
 ```
 
@@ -160,6 +166,16 @@ Verify mathematical convergence, gain limits, and covariance PSD guarantees:
 pytest tests/ -v
 ```
 
+### 4. Interactive Jupyter Notebook Walkthrough
+Explore filter dynamics and visualize confidence ellipses interactively:
+
+```bash
+jupyter notebook notebooks/demo.ipynb
+```
+- **Part 1–2:** Generates noisy 2D motion and compares KF vs. One Euro Filter states.
+- **Part 3–4:** Plots 2D trajectories, coordinate time-series, and dynamic $2\sigma$ covariance uncertainty ellipses.
+- **Part 5–6:** Tests filter robustness against 30% random detection dropouts and displays full benchmark tables.
+
 ---
 
 ## 📊 Benchmark Metrics Summary
@@ -180,6 +196,8 @@ pytest tests/ -v
 - [x] Adaptive 1D and 2D One Euro filters for speed-dependent jitter mitigation
 - [x] Multi-object tracker state machine with Hungarian association (IoU cost metric)
 - [x] YOLOv8 deep learning detector wrapper interface
+- [x] Real-time CLI video tracking and webcam stream processing (`demo.py`)
+- [x] Interactive Jupyter Notebook walkthrough (`notebooks/demo.ipynb`)
 - [x] Multi-scenario synthetic benchmarking suite with automated plot generation
 - [x] Comprehensive test suite covering filter convergence and matrix guarantees
 - [ ] Multi-camera coordinate fusion & re-identification (ReID) embedding support
