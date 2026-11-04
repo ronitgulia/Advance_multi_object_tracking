@@ -58,7 +58,8 @@ weights/
 checkpoints/
 runs/
 datasets/
-data/
+data/*
+!data/README.md
 *.mp4
 *.avi
 *.mkv
