@@ -75,14 +75,44 @@ python -m venv .venv
 source .venv/bin/activate
 
 # Install dependencies
-pip install numpy scipy matplotlib ultralytics pytest
+pip install -r requirements.txt
 ```
 
 ---
 
 ## ⚡ Quickstart & Usage
 
-### 1. Real-time Object Tracking Pipeline
+### 1. Running the Live Tracker CLI (`demo.py`)
+Run real-time multi-object tracking on video recordings or a live webcam feed:
+
+```bash
+# Track a video file (auto-detects and writes annotated video)
+python demo.py --video data/sample.mp4
+
+# Track directly from webcam (device 0) and save annotated output
+python demo.py --output results/webcam_tracked.mp4
+
+# Track specific object classes with custom confidence (e.g., person=0)
+python demo.py --video data/sample.mp4 --conf 0.5 --classes 0
+
+# Run only the synthetic benchmark (skip video inference)
+python demo.py --benchmark-only
+```
+
+#### CLI Option Reference
+| Flag | Default | Description |
+| :--- | :--- | :--- |
+| `--video` | `None` (webcam 0) | Path to input video file or webcam device index |
+| `--output` | `results/tracked.mp4` | Output annotated video destination |
+| `--conf` | `0.4` | YOLO detection confidence threshold |
+| `--device` | `cpu` | PyTorch inference device (`cpu`, `cuda`, `mps`) |
+| `--max-missed` | `5` | Maximum missed frames before track deletion |
+| `--classes` | `None` (all) | Space-separated COCO class IDs to track (e.g. `--classes 0 2`) |
+| `--benchmark-only` | `False` | Run synthetic benchmark evaluation only |
+| `--no-benchmark` | `False` | Skip benchmark evaluation after tracking video |
+| `--benchmark-frames` | `300` | Number of synthetic frames for benchmark run |
+
+### 2. Python API Integration
 ```python
 import cv2
 from detector import YOLOv8Detector
